@@ -74,16 +74,6 @@ def get_item_list_config(board, item_type: str):
     return result
 
 
-def get_items_by_id(board, item_type, id):
-    '''
-    In KiCad version 9.0.4 and below, get_items_by_id does not exist,
-    so we use get_items to search for items.
-    https://gitlab.com/kicad/code/kicad/-/merge_requests/2256
-    '''
-    item_dict = {item.id.value:item for item in board.get_items(get_object_type(item_type))}
-    return item_dict.get(id)
-
-            
 class CreateItemFlowManager(ActionFlowManager, PCBTool):
     """A class that manages the step-by-step flow of Create Item"""
     
@@ -248,11 +238,13 @@ class EditItemFlowManager(ActionFlowManager, PCBTool):
         # target_item_proto = self.board.get_items_by_id([id])[0].proto # version 9.0.4
         
         # Get the item protocol wrapper
-        target_item_proto = get_items_by_id(
-            board=self.board, 
-            item_type=self.item_type_cache, 
-            id=item_id
-            ).proto  # version 9.0.0
+        target_item = self.get_item_by_id(
+            item_type=self.item_type_cache,
+            item_id=item_id,
+        )
+        if target_item is None:
+            raise ValueError(f"Item not found: {item_id}")
+        target_item_proto = target_item.proto
         
         
         # Get the protocol class for the item type
@@ -355,11 +347,12 @@ class MoveItemFlowManager(ActionFlowManager, PCBTool):
         
         # target_item = self.board.get_items_by_id([id])[0] 
         
-        target_item = get_items_by_id(
-            board=self.board, 
-            item_type=self.item_type_cache, 
-            id=item_id
-            )  # version 9.0.0
+        target_item = self.get_item_by_id(
+            item_type=self.item_type_cache,
+            item_id=item_id,
+        )
+        if target_item is None:
+            raise ValueError(f"Item not found: {item_id}")
         
         if isinstance(target_item, get_wrapper_class('Track')):
             # For 'Track', we need to handle start and end positions

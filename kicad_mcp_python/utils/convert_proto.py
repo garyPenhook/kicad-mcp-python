@@ -1,27 +1,10 @@
 from google.protobuf.descriptor import FieldDescriptor
-
-from kipy.proto.common.types import KiCadObjectType
-
-from kipy.proto.board import board_types_pb2
-from kipy.common_types import *
 from pprint import pprint
 
-from kipy.board_types import (
-    ArcTrack,
-    BoardShape,
-    BoardText,
-    BoardTextBox,
-    Dimension,
-    Field,
-    Footprint3DModel,
-    FootprintInstance,
-    Net,
-    Pad,
-    Track,
-    Via,
-    Zone,
-    # Group, will be addad 
-)
+import kipy.board_types as board_types
+from kipy.common_types import *
+from kipy.proto.board import board_types_pb2
+from kipy.proto.common.types import KiCadObjectType
 
 
 
@@ -48,80 +31,69 @@ descriptor_type_map = {
 }
 
 
-KICAD_TYPE_MAPPING = {
-    'Arc': {
-        'proto_class': board_types_pb2.Arc,
-        'wrapper_class': ArcTrack,
-        'object_type': KiCadObjectType.KOT_PCB_ARC
-    },
-    'BoardGraphicShape': {
-        'proto_class': board_types_pb2.BoardGraphicShape,
-        'wrapper_class': BoardShape,
-        'object_type': KiCadObjectType.KOT_PCB_SHAPE
-    },
-    'BoardText': {
-        'proto_class': board_types_pb2.BoardText,
-        'wrapper_class': BoardText,
-        'object_type': KiCadObjectType.KOT_PCB_TEXT
-    },
-    'BoardTextBox': {
-        'proto_class': board_types_pb2.BoardTextBox,
-        'wrapper_class': BoardTextBox,
-        'object_type': KiCadObjectType.KOT_PCB_TEXTBOX
-    },
-    'Dimension': {
-        'proto_class': board_types_pb2.Dimension,
-        'wrapper_class': Dimension,
-        'object_type': KiCadObjectType.KOT_PCB_DIMENSION
-    },
-    'Field': {
-        'proto_class': board_types_pb2.Field,
-        'wrapper_class': Field,
-        'object_type': KiCadObjectType.KOT_PCB_FIELD
-    },
-    'Footprint3DModel': {
-        'proto_class': board_types_pb2.Footprint3DModel,
-        'wrapper_class': Footprint3DModel,
-        'object_type': None  
-    },
-    'FootprintInstance': {
-        'proto_class': board_types_pb2.FootprintInstance,
-        'wrapper_class': FootprintInstance,
-        'object_type': KiCadObjectType.KOT_PCB_FOOTPRINT
-    },
-    'Net': {
-        'proto_class': board_types_pb2.Net,
-        'wrapper_class': Net,
-        'object_type': None  
-    },
-    'Pad': {
-        'proto_class': board_types_pb2.Pad,
-        'wrapper_class': Pad,
-        'object_type': KiCadObjectType.KOT_PCB_PAD
-    },
-    'Track': {
-        'proto_class': board_types_pb2.Track,
-        'wrapper_class': Track,
-        'object_type': KiCadObjectType.KOT_PCB_TRACE
-    },
-    'Via': {
-        'proto_class': board_types_pb2.Via,
-        'wrapper_class': Via,
-        'object_type': KiCadObjectType.KOT_PCB_VIA
-    },
-    'Zone': {
-        'proto_class': board_types_pb2.Zone,
-        'wrapper_class': Zone,
-        'object_type': KiCadObjectType.KOT_PCB_ZONE
-    },
-    # Not yet implemented in kipy.
-    
-    # 'Group': {
-    #     'proto_class': board_types_pb2.Group,
-    #     'wrapper_class': Group,
-    #     'object_type': KiCadObjectType.KOT_PCB_GROUP
-    # },
+WRAPPER_CLASS_OVERRIDES = {
+    "Arc": "ArcTrack",
+    "BoardGraphicShape": "BoardShape",
 }
+
+OBJECT_TYPE_OVERRIDES = {
+    "Footprint3DModel": None,
+    "FootprintInstance": "KOT_PCB_FOOTPRINT",
+    "Net": None,
+    "Track": "KOT_PCB_TRACE",
+}
+
+
+def _iter_proto_message_classes():
+    for name in board_types_pb2.DESCRIPTOR.message_types_by_name:
+        proto_class = getattr(board_types_pb2, name, None)
+        if proto_class is None:
+            continue
+        yield name, proto_class
+
+
+def _resolve_wrapper_class(type_name: str):
+    wrapper_name = WRAPPER_CLASS_OVERRIDES.get(type_name, type_name)
+    return getattr(board_types, wrapper_name, None)
+
+
+def _resolve_object_type(type_name: str):
+    override = OBJECT_TYPE_OVERRIDES.get(type_name)
+    if override is None and type_name in OBJECT_TYPE_OVERRIDES:
+        return None
+    if override is not None:
+        return getattr(KiCadObjectType, override, None)
+
+    candidate_names = [f"KOT_PCB_{type_name.upper()}"]
+    if type_name.startswith("Board"):
+        candidate_names.append(f"KOT_PCB_{type_name[5:].upper()}")
+    if type_name.startswith("BoardGraphic"):
+        candidate_names.append(f"KOT_PCB_{type_name[len('BoardGraphic'):].upper()}")
+    if type_name.startswith("Graphic"):
+        candidate_names.append(f"KOT_PCB_{type_name[len('Graphic'):].upper()}")
+
+    for candidate in candidate_names:
+        if hasattr(KiCadObjectType, candidate):
+            return getattr(KiCadObjectType, candidate)
+
+    return None
+
+
+def build_kicad_type_mapping():
+    mapping = {}
+    for type_name, proto_class in _iter_proto_message_classes():
+        wrapper_class = _resolve_wrapper_class(type_name)
+        if wrapper_class is None:
+            continue
+        mapping[type_name] = {
+            "proto_class": proto_class,
+            "wrapper_class": wrapper_class,
+            "object_type": _resolve_object_type(type_name),
+        }
+    return mapping
+
+
+KICAD_TYPE_MAPPING = build_kicad_type_mapping()
 
 def get_proto_class(type_name):
     """Return proto class by string type name"""
@@ -195,21 +167,26 @@ def convert_proto_to_dict():
 BOARDITEM_TYPE_CONFIGS = convert_proto_to_dict()
 
 # Define the required arguments for each item type.
+REQUIRED_ARGS = {
+    "Arc": ["start", "end", "center", "angle"],
+    "BoardGraphicShape": ["shape"],
+    "BoardText": ["text"],
+    "BoardTextBox": ["textbox"],
+    "Dimension": ["text", "text_position"],
+    "Field": ["name", "text"],
+    "Footprint3DModel": ["filename", "position", "offset"],
+    "FootprintInstance": ["position", "definition"],  # TODO
+    "Net": ["code", "name"],
+    "Pad": ["type"],
+    "Track": ["start", "end"],
+    "Via": ["position"],
+    "Zone": ["name", "layers", "outline"],
+    # "Group": ["items"],
+}
 
-BOARDITEM_TYPE_CONFIGS['Arc']['required_args']                  = ['start', 'end', 'center', 'angle']
-BOARDITEM_TYPE_CONFIGS['BoardGraphicShape']['required_args']    = ['shape']
-BOARDITEM_TYPE_CONFIGS['BoardText']['required_args']            = ['text']
-BOARDITEM_TYPE_CONFIGS['BoardTextBox']['required_args']         = ['textbox']
-BOARDITEM_TYPE_CONFIGS['Dimension']['required_args']            = ['text', 'text_position']
-BOARDITEM_TYPE_CONFIGS['Field']['required_args']                = ['name', 'text']
-BOARDITEM_TYPE_CONFIGS['Footprint3DModel']['required_args']     = ['filename', 'position', 'offset']
-BOARDITEM_TYPE_CONFIGS['FootprintInstance']['required_args']    = ['position', 'definition'] # TODO
-BOARDITEM_TYPE_CONFIGS['Net']['required_args']                  = ['code', 'name']
-BOARDITEM_TYPE_CONFIGS['Pad']['required_args']                  = ['type']
-BOARDITEM_TYPE_CONFIGS['Track']['required_args']                = ['start', 'end']
-BOARDITEM_TYPE_CONFIGS['Via']['required_args']                  = ['position']
-BOARDITEM_TYPE_CONFIGS['Zone']['required_args']                 = ['name', 'layers', 'outline']
-# BOARDITEM_TYPE_CONFIGS['Group']['required_args']                = ['items']
+for type_name, required in REQUIRED_ARGS.items():
+    if type_name in BOARDITEM_TYPE_CONFIGS:
+        BOARDITEM_TYPE_CONFIGS[type_name]["required_args"] = required
     
 
 if __name__ == "__main__":

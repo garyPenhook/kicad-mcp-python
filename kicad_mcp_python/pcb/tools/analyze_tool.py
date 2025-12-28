@@ -24,10 +24,25 @@ class BoardAnalyzer(ToolManager, PCBTool):
 
     def __init__(self, mcp: FastMCP):
         super().__init__(mcp)
-        self.pcb_converter = KiCadPCBConverter()
+        self.pcb_converter = None
+        self._pcb_converter_error = None
         self.add_tool(self.get_board_status)        
         self.add_tool(self.get_items_by_type)        
         self.add_tool(self.get_item_type_args_hint)        
+
+    def _get_pcb_converter(self) -> KiCadPCBConverter:
+        if self.pcb_converter is not None:
+            return self.pcb_converter
+        if self._pcb_converter_error is not None:
+            raise RuntimeError(
+                f"KiCad CLI unavailable: {self._pcb_converter_error}"
+            )
+        try:
+            self.pcb_converter = KiCadPCBConverter()
+        except Exception as exc:
+            self._pcb_converter_error = exc
+            raise RuntimeError(f"KiCad CLI unavailable: {exc}")
+        return self.pcb_converter
         
             
     def get_board_status(self):
@@ -56,7 +71,7 @@ class BoardAnalyzer(ToolManager, PCBTool):
             except Exception as e:
                 result[item_type] = f'Not yet implemented, {str(e)}'
                 
-        base64_image = self.pcb_converter.pcb_to_jpg_via_svg(
+        base64_image = self._get_pcb_converter().pcb_to_jpg_via_svg(
             boardname=self.board.name,
             )
         
